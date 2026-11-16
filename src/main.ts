@@ -4,5 +4,5 @@ const router=createRouter({history:createWebHistory(),routes:[
 {path:'/checkout/:id',component:Checkout},{path:'/admin/catalogo/login',component:Login},{path:'/admin/catalogo/:section?',component:Admin,meta:{admin:true}},
 {path:'/admin',redirect:'/admin/catalogo'},{path:'/admin/dashboard',redirect:'/admin/catalogo'},
 {path:'/:pathMatch(.*)*',redirect:'/'}]});
-router.beforeEach(async(to)=>{if(to.meta.admin){if(!configured)return '/admin/catalogo/login';try{if(!(await isAdmin()))return {path:'/checkout/:id',component:Checkout},{path:'/admin/catalogo/login',query:{returnTo:to.fullPath}};}catch{return '/admin/catalogo/login';}}});
+router.beforeEach(async(to)=>{if(to.meta.admin){if(!configured)return '/admin/catalogo/login';try{if(!(await isAdmin()))return {path:'/admin/catalogo/login',query:{returnTo:to.fullPath}};}catch{return '/admin/catalogo/login';}}});
 createApp(App).use(router).mount('#app');
