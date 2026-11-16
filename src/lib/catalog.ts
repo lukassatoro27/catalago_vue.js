@@ -69,8 +69,8 @@ export async function getEcommerceProduct(slugOrId:string):Promise<Product|null>
   return data?normalizeEcommerceProduct(data as EcommerceProductRow):null;
 }
 
-// O checkout e o pagamento permanecem no e-commerce oficial da Shopping de Flores.
-// Nunca gere cobrança ou calcule valores definitivos somente no frontend do catálogo.
+// Link legado opcional. Fluxo principal utiliza checkout interno Vue.
+// Nunca calcule valores definitivos ou confirme pagamentos somente no frontend.
 export function purchaseUrl(product: Pick<Product, 'id'|'slug'>): string {
   const identifier = product.slug?.trim() || product.id;
   const url = new URL(`/produto/${encodeURIComponent(identifier)}`, 'https://shoppingdeflores.com');
