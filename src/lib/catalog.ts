@@ -68,3 +68,21 @@ export async function getEcommerceProduct(slugOrId:string):Promise<Product|null>
   if(error)throw error;
   return data?normalizeEcommerceProduct(data as EcommerceProductRow):null;
 }
+
+// O checkout e o pagamento permanecem no e-commerce oficial da Shopping de Flores.
+// Nunca gere cobrança ou calcule valores definitivos somente no frontend do catálogo.
+export function purchaseUrl(product: Pick<Product, 'id'|'slug'>): string {
+  const identifier = product.slug?.trim() || product.id;
+  const url = new URL(`/produto/${encodeURIComponent(identifier)}`, 'https://shoppingdeflores.com');
+  // Mantém UTMs do catálogo para atribuição no e-commerce, sem transportar dados sensíveis.
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    for (const key of ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid']) {
+      const value = params.get(key);
+      if (value && value.length < 300) url.searchParams.set(key, value);
+    }
+  }
+  if (!url.searchParams.has('utm_source')) url.searchParams.set('utm_source','catalogo_digital');
+  if (!url.searchParams.has('utm_medium')) url.searchParams.set('utm_medium','referral');
+  return url.toString();
+}

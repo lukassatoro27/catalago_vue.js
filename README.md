@@ -44,3 +44,21 @@ Não executar `supabase/schema.sql` em banco já em produção sem análise: aqu
 5. Validar se o catalogo Vue está apontando para o mesmo **Project URL** do e-commerce principal.
 
 Integração elaborada a partir do código fornecido, sem acesso ao Supabase em produção. Não foi possível confirmar volume de registros, permissões ou conteúdo real do banco remotamente.
+
+
+## Compra e pagamento (integração segura)
+
+Os botões **Comprar agora** no catálogo e na página do produto direcionam para a página do **mesmo produto** no e-commerce oficial `https://shoppingdeflores.com/produto/:slug-ou-id`. O fluxo oficial controla carrinho, CEP, frete, entrega, cupons, pedido e Mercado Pago; o catálogo não manipula tokens nem cria pagamentos. O cliente ainda precisa adicionar o produto à compra no site oficial.
+
+Esta abordagem não embute o checkout no catálogo nem transfere automaticamente uma sacola entre domínios. Para checkout integral dentro do catálogo é necessária uma integração de backend dedicada e homologação das rotinas de pagamento e validações de frete e pedido.
+
+Ajustar o domínio no helper `purchaseUrl` em `src/lib/catalog.ts` caso o e-commerce oficial mude de endereço.
+
+
+## Correção das requisições 404 (16/11/2026)
+
+A vitrine **não consulta mais** `digital_catalog_settings` nem `digital_catalog_banners`, pois essas tabelas não foram identificadas no banco do e-commerce. Usa conteúdos estáticos de fallback já presentes no projeto. Produtos continuam vindo de `public.produtos_novo`.
+
+Na seção Fretes do administrador legado, a chamada a `fretes_cidades` foi bloqueada; a tela informa que o frete deve ser administrado no e-commerce principal. Outras seções antigas de administração (`digital_catalog_products`, `digital_catalog_admins`, `digital_catalog_categories` etc.) ainda dependem das tabelas correspondentes e não foram migradas. O catálogo público não depende delas. Não execute `supabase/schema.sql` no banco de produção sem revisão da estrutura e políticas existentes.
+
+O código de erro `PGRST205` significa que a tabela/relação solicitada não está presente no schema cache do PostgREST. Não é solucionado por mudar a chave pública ou liberar RLS. Caso persista uma chamada a `fretes_cidades`, confira se o navegador está em um deploy novo e se não há outra implementação efetuando a requisição.
