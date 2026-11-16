@@ -26,3 +26,16 @@
  body{padding-bottom:calc(67px + env(safe-area-inset-bottom))}
 }
 @media(max-width:520px){.shopping-header .shopping-cart-link span{display:none}.shopping-header .shopping-cart-link{padding:10px 14px}.shopping-header .brand span{font-size:13px}}
+
+/* Campo de cupons - identidade Shopping de Flores */
+.catalog-coupon{margin:18px 0 12px;padding:16px;border:1px solid #cfe7e0;border-radius:14px;background:#f6fbf9}
+.catalog-coupon>label{display:block;font-weight:700;color:#2f5d50;margin-bottom:9px}
+.catalog-coupon-row{display:flex;gap:8px;align-items:stretch}
+.catalog-coupon-row input{flex:1;min-width:0;border:1px solid #b9d8ce;border-radius:9px;padding:10px;background:white;text-transform:uppercase}
+.catalog-coupon-row button{white-space:nowrap}
+.catalog-coupon-note{font-size:12px;line-height:1.5;color:#515151;margin:9px 0}
+.catalog-coupon-applied,.catalog-coupon-discount{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.catalog-coupon-applied span{font-weight:700;color:#038c8c}
+.catalog-coupon-applied button{padding:6px 10px}
+.catalog-coupon-discount{color:#038c8c}
+@media(max-width:440px){.catalog-coupon-row{flex-wrap:wrap}.catalog-coupon-row button{flex:1}}

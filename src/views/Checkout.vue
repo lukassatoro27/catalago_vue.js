@@ -4,6 +4,7 @@ import {RouterLink,useRoute} from 'vue-router';
 import {db} from '../lib/supabase';
 import {getEcommerceProduct,money,price,imageUrl,type Product} from '../lib/catalog';
 import {invokePayment,mercadoPagoSdk,paymentMethod} from '../lib/payment';
+import {validateCoupon,calculateCoupon,normalizeCouponCode,type Coupon} from '../lib/coupons';
 
 const route=useRoute();const product=ref<Product|null>(null);const loading=ref(true);const busy=ref(false);const error=ref('');const step=ref(1);
 const qty=ref(1);const cepValidated=ref(false);const shipping=ref<number|null>(null);const periods=ref<any[]>([]);const periodId=ref('');
@@ -11,7 +12,22 @@ const orderId=ref('');const method=ref<'pix'|'card'>('pix');const pix=ref<{payme
 const form=ref({cartinha:'',recipientName:'',recipientPhone:'',zipCode:'',street:'',number:'',complement:'',neighborhood:'',city:'',state:'',deliveryDate:'',buyerName:'',email:'',cpf:'',buyerPhone:''});
 const card=ref({number:'',name:'',expiry:'',cvv:'',cpf:'',installments:1});
 const subtotal=computed(()=>product.value?Number((price(product.value)*qty.value).toFixed(2)):0);
-const total=computed(()=>Number((subtotal.value+(shipping.value??0)).toFixed(2)));
+const grossTotal=computed(()=>Number((subtotal.value+(shipping.value??0)).toFixed(2)));
+const couponInput=ref('');const coupon=ref<Coupon|null>(null);const couponBusy=ref(false);const couponMessage=ref('');
+const previewDiscount=computed(()=>coupon.value?calculateCoupon(coupon.value,grossTotal.value):0);
+const total=computed(()=>Number((grossTotal.value-previewDiscount.value).toFixed(2)));
+// A RPC create_order original não confirma desconto/cupom no servidor.
+// Por segurança, pedidos com cupom não são enviados até a integração server-side estar pronta.
+const couponPendingBackend=computed(()=>Boolean(coupon.value));
+async function applyCoupon(){
+ couponMessage.value='';couponBusy.value=true;
+ try{coupon.value=await validateCoupon(couponInput.value,grossTotal.value);couponInput.value=normalizeCouponCode(couponInput.value);couponMessage.value='Cupom encontrado. Desconto previsto abaixo; a finalização exige validação segura no servidor.';}
+ catch(e){coupon.value=null;couponMessage.value=e instanceof Error?e.message:String(e);}
+ finally{couponBusy.value=false;}
+}
+function removeCoupon(){coupon.value=null;couponInput.value='';couponMessage.value='Cupom removido.';}
+watch(grossTotal,async()=>{if(!coupon.value)return;try{coupon.value=await validateCoupon(coupon.value.code,grossTotal.value);couponMessage.value='Cupom revalidado após mudança no pedido.';}catch(e){coupon.value=null;couponMessage.value=e instanceof Error?e.message:String(e);}});
+
 const selectedPeriod=computed(()=>periods.value.find(p=>String(p.id)===periodId.value));
 const digits=(v:string)=>v.replace(/\D/g,'');
 const todayBR=()=>{const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const v=(key:string)=>parts.find(p=>p.type===key)?.value||'';return `${v('year')}-${v('month')}-${v('day')}`;};
@@ -50,7 +66,7 @@ function next(){error.value='';if(step.value===1){if(!form.value.recipientName||
  step.value=Math.min(4,step.value+1);}
 
 async function createOrder(){if(busy.value||orderId.value)return;
- error.value='';if(sundayBlocked()){error.value='Vendas pausadas aos domingos.';return;}
+ error.value='';if(couponPendingBackend.value){error.value='Cupom identificado, mas a criação segura de pedido com desconto ainda não está habilitada no servidor. Remova o cupom para seguir sem desconto ou use o checkout oficial do Shopping de Flores.';return;}if(sundayBlocked()){error.value='Vendas pausadas aos domingos.';return;}
  if(!product.value||!cepValidated.value||shipping.value===null||!validPeriod()){error.value='Confira CEP, frete, data e período antes de prosseguir.';return;}
  busy.value=true;
  try{
@@ -105,5 +121,10 @@ async function checkStatus(){if(!orderId.value)return;busy.value=true;error.valu
 <div v-if="method==='pix'"><div v-if="!pix"><p>Gere um QR Code Pix para pagar sem sair do catálogo.</p><button :disabled="busy" class="btn primary full" @click="generatePix">{{busy?'Gerando...':'Gerar Pix'}}</button></div><div v-else class="pix-result"><img :src="pix.qr_code" alt="QR Code para pagamento Pix"/><label>Pix copia e cola<textarea :value="pix.pix_code" readonly rows="4"></textarea></label><button class="btn primary" @click="copyPix">Copiar código Pix</button></div></div>
 <form v-else class="card-form" @submit.prevent="payCard" autocomplete="off"><label>Número do cartão *<input v-model="card.number" inputmode="numeric" autocomplete="cc-number" maxlength="23" required/></label><label>Nome impresso no cartão *<input v-model="card.name" autocomplete="cc-name" required/></label><div class="checkout-two"><label>Validade MM/AA *<input v-model="card.expiry" placeholder="MM/AA" autocomplete="cc-exp" required/></label><label>CVV *<input v-model="card.cvv" type="password" inputmode="numeric" maxlength="4" autocomplete="cc-csc" required/></label></div><div class="checkout-two"><label>CPF do titular *<input v-model="card.cpf" inputmode="numeric" required/></label><label>Parcelas<select v-model.number="card.installments"><option v-for="n in 6" :key="n" :value="n">{{n}}x (sujeito à confirmação do emissor)</option></select></label></div><button class="btn primary full" :disabled="busy" type="submit">{{busy?'Processando...':`Pagar ${money(total)}`}}</button></form>
 <p v-if="result" class="notice" role="status">{{result}}</p><button class="btn" type="button" :disabled="busy" @click="checkStatus">Consultar situação do pagamento</button><p class="checkout-warning">O pedido só é considerado pago após confirmação do Mercado Pago pelo sistema principal. Não efetue outra cobrança sem verificar o status.</p></section>
-</main><aside class="checkout-panel checkout-summary"><h2>Resumo</h2><img v-if="product.imagem_url" :src="imageUrl(product.imagem_url)" :alt="product.nome"/><strong>{{product.nome}}</strong><label>Quantidade<select v-model.number="qty" :disabled="step>=4"><option v-for="n in 10" :key="n" :value="n">{{n}}</option></select></label><p>Produtos <strong>{{money(subtotal)}}</strong></p><p>Entrega <strong>{{shipping===null?'A calcular':money(shipping)}}</strong></p><div class="checkout-total">Total <strong>{{money(total)}}</strong></div><small>Pagamento processado pelo Mercado Pago, usando as funções do e-commerce Shopping de Flores.</small></aside></div></div>
+</main><aside class="checkout-panel checkout-summary"><h2>Resumo</h2><img v-if="product.imagem_url" :src="imageUrl(product.imagem_url)" :alt="product.nome"/><strong>{{product.nome}}</strong><label>Quantidade<select v-model.number="qty" :disabled="step>=4"><option v-for="n in 10" :key="n" :value="n">{{n}}</option></select></label><p>Produtos <strong>{{money(subtotal)}}</strong></p><p>Entrega <strong>{{shipping===null?'A calcular':money(shipping)}}</strong></p>
+<div class="catalog-coupon"><label for="catalog-coupon-code">Tem um cupom de desconto?</label><div class="catalog-coupon-row"><input id="catalog-coupon-code" v-model="couponInput" :disabled="couponBusy||Boolean(orderId)" maxlength="80" placeholder="Código do cupom" autocomplete="off" @keyup.enter="applyCoupon"/><button type="button" class="btn primary" :disabled="couponBusy||Boolean(orderId)||!couponInput.trim()" @click="applyCoupon">{{couponBusy?'Verificando...':'Aplicar'}}</button></div>
+<p v-if="couponMessage" class="catalog-coupon-note" role="status">{{couponMessage}}</p>
+<div v-if="coupon" class="catalog-coupon-applied"><span>✓ {{coupon.code}}</span><button type="button" class="btn" :disabled="Boolean(orderId)" @click="removeCoupon">Remover</button></div></div>
+<p v-if="coupon" class="catalog-coupon-discount">Desconto estimado <strong>− {{money(previewDiscount)}}</strong></p>
+<div class="checkout-total">Total <strong>{{money(total)}}</strong></div><small v-if="couponPendingBackend" class="catalog-coupon-note">Prévia de desconto. Para proteger o pagamento, o pedido com cupom só poderá ser concluído após integração segura no backend.</small><small>Pagamento processado pelo Mercado Pago, usando as funções do e-commerce Shopping de Flores.</small></aside></div></div>
 </template>
