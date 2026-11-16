@@ -13,7 +13,27 @@ onMounted(async()=>{
 const filtered=computed(()=>products.value.filter(p=>(category.value==='all'||p.categoria===category.value)&&p.nome.toLowerCase().includes(search.value.trim().toLowerCase())));
 const phone='5519993614366';
 </script>
-<template><header class="header"><div class="container header-inner"><RouterLink to="/" class="brand"><img :src="logoDefault" alt="Logo Shopping de Flores"/> <span>Shopping <strong>de Flores</strong></span></RouterLink><nav><a href="#produtos">Flores e presentes</a><a :href="whatsapp(phone,'Olá! Gostaria de ajuda com o catálogo.')" target="_blank" rel="noopener">Fale conosco</a><RouterLink to="/admin/catalogo">Gerenciar</RouterLink></nav><a class="cart-button" href="#produtos">Escolher flores</a></div></header>
+<template>
+<header class="header shopping-header">
+  <div class="container header-inner">
+    <RouterLink to="/" class="brand"><img :src="logoDefault" alt="Logo Shopping de Flores"/><span>Shopping <strong>de Flores</strong></span></RouterLink>
+    <nav class="shopping-desktop-nav" aria-label="Navegação do Shopping de Flores">
+      <a href="#produtos">Flores e presentes</a>
+      <a href="https://shoppingdeflores.com/categoria/buques">Buquês</a>
+      <a href="https://shoppingdeflores.com/categoria/cestas">Cestas</a>
+      <a href="https://shoppingdeflores.com/carrinho#cupom" title="Aplicar cupom no carrinho oficial">Cupom</a>
+      <a href="https://shoppingdeflores.com/carrinho" title="Abrir carrinho do Shopping de Flores">Carrinho</a>
+      <a :href="whatsapp(phone,'Olá! Gostaria de ajuda com o catálogo.')" target="_blank" rel="noopener">Fale conosco</a>
+    </nav>
+    <a class="cart-button shopping-cart-link" href="https://shoppingdeflores.com/carrinho" aria-label="Abrir carrinho oficial">🛒 <span>Minha cesta</span></a>
+  </div>
+</header>
+<nav class="shopping-mobile-nav" aria-label="Atalhos do Shopping de Flores">
+  <a href="https://shoppingdeflores.com/categoria/buques"><span aria-hidden="true">🌻</span>Buquês</a>
+  <a href="https://shoppingdeflores.com/categoria/cestas"><span aria-hidden="true">🎁</span>Cestas</a>
+  <a href="https://shoppingdeflores.com/carrinho#cupom"><span aria-hidden="true">🏷️</span>Cupom</a>
+  <a href="https://shoppingdeflores.com/carrinho"><span aria-hidden="true">🛒</span>Carrinho</a>
+</nav>
 <section class="hero"><div class="container hero-grid"><div class="hero-copy"><div class="eyebrow">SHOPPING DE FLORES · CATÁLOGO DIGITAL</div><h1>Flores para <em>momentos inesquecíveis.</em></h1><p>Celebre, surpreenda e demonstre carinho. Escolha suas flores favoritas e finalize seu pedido aqui mesmo, com Pix ou cartão.</p><a class="btn primary" href="#produtos">Descobrir presentes <span>↗</span></a><div class="muted">Feito com carinho, para quem faz a vida florescer.</div></div><img :src="heroDefault" alt="Flores do Shopping de Flores" class="hero-photo"/></div></section>
 <section id="produtos" class="container section"><div class="eyebrow">ESCOLHAS ESPECIAIS</div><h2>Um gesto que <em>floresce.</em></h2><p class="subtitle">Encontre o presente perfeito para cada ocasião.</p><div class="filters"><input v-model="search" placeholder="Buscar buquês, flores e presentes..." aria-label="Buscar produtos"/><select v-model="category" aria-label="Filtrar categoria"><option value="all">Todas as categorias</option><option v-for="c in cats" :key="c.id" :value="c.id">{{c.nome}}</option></select></div><p v-if="loading" class="notice">Carregando catálogo...</p><p v-if="error" class="notice error">{{error}}</p><p v-else-if="!loading && !filtered.length" class="notice">Nenhum produto encontrado nesta seleção.</p><div class="products"><article v-for="p in filtered" :key="p.id" class="product"><RouterLink :to="`/catalogo/produto/${p.slug||p.id}`" class="product-photo"><img v-if="p.imagem_url" :src="imageUrl(p.imagem_url)" :alt="p.nome" loading="lazy"/><div v-else class="placeholder">🌷</div><span v-if="p.preco_promocional&&p.preco_promocional<p.preco" class="offer">OFERTA</span></RouterLink><div class="eyebrow tiny">{{p.categoria||cats.find(c=>c.id===p.categoria_id)?.nome||'FLORES'}}</div><RouterLink :to="`/catalogo/produto/${p.slug||p.id}`" class="product-name">{{p.nome}}</RouterLink><div class="price"><strong>{{money(price(p))}}</strong><del v-if="price(p)<p.preco">{{money(p.preco)}}</del></div><RouterLink class="btn primary full" :to="`/checkout/${p.id}`">Comprar agora →</RouterLink></article></div></section>
 <section class="banner"><div class="container"><div class="eyebrow">TUDO PARA MOMENTOS INESQUECÍVEIS</div><h2>O carinho mora nos <em>detalhes.</em></h2><a class="btn primary" :href="whatsapp(phone,'Olá! Gostaria de escolher um presente especial.')" target="_blank" rel="noopener">Conversar com a equipe ↗</a></div></section><footer class="footer"><div class="container"><strong>Shopping de Flores</strong><p>Tudo para momentos inesquecíveis.</p><small>© {{new Date().getFullYear()}} Shopping de Flores</small></div></footer>
