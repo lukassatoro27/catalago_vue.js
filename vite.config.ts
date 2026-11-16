@@ -5,7 +5,7 @@ import vue from '@vitejs/plugin-vue';
 // exposing ONLY the public Supabase project URL and publishable/anon key.
 // These values are public by design. Never map service_role, secret, JWT or DB keys.
 export default defineConfig(({ mode }) => {
-  const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env };
+  const env = loadEnv(mode, '.', '');
   const publicUrl = env.VITE_SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || env.SUPABASE_URL || '';
   const publicKey = env.VITE_SUPABASE_ANON_KEY || env.VITE_SUPABASE_PUBLISHABLE_KEY ||
     env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
