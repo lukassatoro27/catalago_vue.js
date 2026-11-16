@@ -4,7 +4,7 @@ const products=ref<Product[]>([]),cats=ref<Category[]>([]),fretes=ref<Frete[]>([
 type CartItem={id:string;nome:string;preco:number;qty:number};const cart=ref<CartItem[]>([]);
 try{const stored=localStorage.getItem('flores-sacola-vue');if(stored)cart.value=JSON.parse(stored);}catch{}
 watch(cart,v=>localStorage.setItem('flores-sacola-vue',JSON.stringify(v)),{deep:true});
-onMounted(async()=>{if(!configured){error.value='Conexão Supabase não configurada. Consulte o README para configurar o arquivo .env.';loading.value=false;return;}try{const p=await listEcommerceProducts();products.value=p;cats.value=ecommerceCategories(p);
+onMounted(async()=>{if(!configured){error.value='Conexão Supabase não configurada. Confira SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY (ou VITE_SUPABASE_*) nas variáveis de ambiente da Vercel e publique novamente.';loading.value=false;return;}try{const p=await listEcommerceProducts();products.value=p;cats.value=ecommerceCategories(p);
 // Recursos opcionais do catálogo independente. Produtos não dependem dessas tabelas.
 const optional=await Promise.allSettled([list<Frete>('fretes_cidades'),list<Banner>('digital_catalog_banners'),settings()]);
 if(optional[0].status==='fulfilled')fretes.value=optional[0].value;

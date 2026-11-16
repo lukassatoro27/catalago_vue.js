@@ -10,7 +10,7 @@ As demais áreas do painel de catálogo continuam usando as tabelas independente
 
 ## Vercel — configurar para Production, Preview e Development conforme necessário
 
-Adicione **exatamente** estas variáveis em Project → Settings → Environment Variables:
+Você pode usar estas variáveis em Project → Settings → Environment Variables:
 
 ```env
 VITE_SUPABASE_URL=https://SEU-PROJETO.supabase.co
@@ -19,7 +19,7 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_SUA_CHAVE_PUBLICA
 
 Pode-se usar `VITE_SUPABASE_PUBLISHABLE_KEY` em lugar de `VITE_SUPABASE_ANON_KEY`.
 
-`SUPABASE_URL`, `SUPABASE_ANON_KEY` e `NEXT_PUBLIC_SUPABASE_*` **não** são lidas automaticamente pelo Vite. Após salvá-las faça **Redeploy**. Não usar `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SECRET_KEY`, JWT secret nem senha de PostgreSQL no frontend.
+**Compatibilidade nesta versão:** o `vite.config.ts` também reconhece as variáveis públicas já criadas pela integração Supabase da Vercel: `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, ou `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Não é necessário duplicá-las com prefixo `VITE_` se já estiverem presentes no ambiente do deploy. Após publicar a alteração no GitHub, faça **Redeploy**. As variáveis precisam estar disponíveis no ambiente Production (ou no ambiente do deploy). Não usar `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SECRET_KEY`, JWT secret nem senha de PostgreSQL no frontend.
 
 ## Preparar a leitura dos produtos
 
