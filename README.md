@@ -1,49 +1,46 @@
-# Shopping de Flores — Catálogo Vue 3 + Supabase
+# Catálogo Vue 3 → produtos do e-commerce 2.0
 
-## Escopo entregue
+## Integração com banco existente
 
-Nova aplicação com **Vue 3 + Composition API + TypeScript + Vue Router + Vite**, substituindo React/React Router no frontend. Integração com **Supabase JS**, autenticação via Supabase Auth, autorização com **Row Level Security (RLS)** e painel administrativo para produtos, categorias, banners, destaques, configurações, fretes e Black Friday. Visualização de pedidos/pagamentos. O catálogo tem busca, filtros, detalhes de produtos, sacola persistente, cálculo de frete e encaminhamento do pedido via WhatsApp. Design responsivo nas cores da marca.
+Este projeto lê **diretamente** a tabela `public.produtos_novo` do Supabase do e-commerce Shopping de Flores. Não cria, altera, importa ou duplica produtos. Campos mapeados: `nome`, `descricao`, `preco`, `promo_preco`, `imagem`, `imagens_adicionais`, `categorias`, `ativo`, `slug`, `destaque_loja`.
 
-**Importante:** esta é uma reconstrução funcional dos fluxos principais, **não uma migração 1:1 de todas as telas, integrações e dados**. O ZIP original usa React Router + PocketBase. Sem export dos registros reais, arquivos de storage e credenciais do Supabase de destino, não é possível migrar os dados nem afirmar que os dados já estejam conectados. O checkout Mercado Pago, webhooks, tracking e a lógica server-side original **não foram portados**. A opção de finalizar no frontend atual abre o WhatsApp; não processa pagamentos. Não publicar como substituto integral antes da homologação.
+Categorias da vitrine são derivadas da coluna `categorias` (array) nos produtos ativos. O catálogo público obtém lotes de até 500 produtos por consulta. Página de produto pesquisa a tabela original por ID ou slug.
 
-## 1. Configuração
+As demais áreas do painel de catálogo continuam usando as tabelas independentes `digital_catalog_*` previstas no projeto anterior. **Não use o painel Vue para tentar editar os produtos do e-commerce 2.0**; a gestão desses produtos continua no gerenciador principal. As configurações, fretes e banners do catálogo são opcionais e não bloqueiam a vitrine quando não existem, mas podem aparecer sem dados. O carrinho atual gera mensagem de WhatsApp; não é o checkout do e-commerce.
 
-1. No Supabase de destino, abra **SQL Editor** e execute `supabase/schema.sql` **somente após revisar os nomes das tabelas para evitar conflitos** com um projeto Supabase existente.
-2. Em **Authentication > Users**, crie/convide o usuário administrador.
-3. Execute no SQL Editor (substituindo o UUID):
+## Vercel — configurar para Production, Preview e Development conforme necessário
 
-   `insert into public.digital_catalog_admins (user_id) values ('UUID_DO_USUARIO') on conflict do nothing;`
+Adicione **exatamente** estas variáveis em Project → Settings → Environment Variables:
 
-4. Copie `.env.example` para `.env` e configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` (chave publicável/anon).
-5. Rode `npm install` e `npm run dev` para desenvolver. `npm run build` gera `dist/` para Vercel. Configure as duas variáveis em Vercel > Project Settings > Environment Variables.
+```env
+VITE_SUPABASE_URL=https://SEU-PROJETO.supabase.co
+VITE_SUPABASE_ANON_KEY=sb_publishable_SUA_CHAVE_PUBLICA
+```
 
-## 2. URLs
+Pode-se usar `VITE_SUPABASE_PUBLISHABLE_KEY` em lugar de `VITE_SUPABASE_ANON_KEY`.
 
-- `/` e `/catalogo` — catálogo público
-- `/catalogo/produto/:slug` — produto
-- `/admin/catalogo/login` — login
-- `/admin/catalogo` — visão geral
-- `/admin/catalogo/produtos`, `/categorias`, `/banners`, `/destaques`, `/configuracoes`, `/fretes`, `/black-friday`, `/pedidos`, `/pagamentos` — gestão
+`SUPABASE_URL`, `SUPABASE_ANON_KEY` e `NEXT_PUBLIC_SUPABASE_*` **não** são lidas automaticamente pelo Vite. Após salvá-las faça **Redeploy**. Não usar `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SECRET_KEY`, JWT secret nem senha de PostgreSQL no frontend.
 
-## 3. Migrando dados do PocketBase
+## Preparar a leitura dos produtos
 
-O banco original **não está incluído como um dump de registros**. A pasta `apps/pocketbase` do projeto enviado contém migrations e imagens de seed, mas isso não comprova presença dos registros atuais. Procedimento recomendado:
+O usuário público (`anon`) precisa ter permissão **SELECT** com RLS apenas nos produtos ativos. Consulte `supabase/LEIA-ANTES-PRODUTOS.sql`: é somente um modelo para revisão; NÃO execute sem verificar as políticas já existentes. Se houver erro 42501/permissão, solicite ao administrador do banco revisar grants e RLS. Não desative RLS para resolver.
 
-1. Fazer backup da instância PocketBase original, incluindo coleções e arquivos, com autorização.
-2. Exportar registros atuais para JSON/CSV por coleção.
-3. Importar na ordem: categorias → produtos → banners → configurações → fretes → Black Friday → pedidos → pagamentos.
-4. Preservar associação de categorias, IDs anteriores (ou produzir tabela de equivalência UUID), links e caminhos de imagem; copiar os arquivos de storage para o bucket `catalogo`. O helper `imageUrl()` aceita URL https ou caminho dentro do bucket.
-5. Para Supabase já usado por outros aplicativos, reconciliar schemas em vez de executar migrations cegamente. Aplicar RLS e fazer testes com usuário visitante e admin.
+## Instalação
 
-## 4. Pontos críticos de segurança e homologação
+```bash
+npm install
+npm run build
+npm run dev
+```
 
-- Nunca colocar `service_role`, `sb_secret`, credenciais do Mercado Pago ou outros segredos no `.env` do frontend nem no Git.
-- A tabela `digital_catalog_admins` tem autorização por UUID de Supabase Auth. Não há criação pública de administradores.
-- A RLS protege gravações administrativas e informações de pedidos/pagamentos.
-- A gravação de pedidos com valores deve ser feita **server-side**, com cálculo de preço e frete no servidor (não confiar no carrinho do navegador).
-- Webhook Mercado Pago deve validar notificação via backend/Edge Function e ser idempotente antes de marcar pagamento.
-- Auditoria pendente: funcionamento completo de todos os campos herdados, dados reais, imagens, pixels/GA4/GTM, Black Friday e dashboards.
+Não executar `supabase/schema.sql` em banco já em produção sem análise: aquele SQL pertence ao catálogo isolado antigo e cria tabelas distintas. Nenhuma credencial real foi embutida no ZIP.
 
-## 5. Sobre os componentes originais
+## Validações
 
-O original possui vários componentes Radix/shadcn específicos de React e serviços de PocketBase. Eles não podem ser copiados diretamente como componentes Vue. O novo frontend oferece implementações Vue nativas dos fluxos centrais; os recursos avançados exigem migração individual e testes.
+1. Verificar se `produtos_novo` retorna produtos ativos com chave publicável.
+2. Conferir imagens já armazenadas no formato de URLs utilizado pelo e-commerce.
+3. Conferir preços, promoções, links e categorias.
+4. Testar detalhes por slug e UUID e verificar console/network para erros RLS.
+5. Validar se o catalogo Vue está apontando para o mesmo **Project URL** do e-commerce principal.
+
+Integração elaborada a partir do código fornecido, sem acesso ao Supabase em produção. Não foi possível confirmar volume de registros, permissões ou conteúdo real do banco remotamente.

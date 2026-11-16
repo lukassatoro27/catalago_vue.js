@@ -1,0 +1,9 @@
+-- MODELO DE REFERÊNCIA, NÃO EXECUTE AUTOMATICAMENTE EM PRODUÇÃO.
+-- Antes de qualquer mudança, inspecione RLS / políticas e grants existentes de public.produtos_novo.
+-- O frontend precisa apenas fazer SELECT nas linhas com ativo=true.
+-- Exemplos para adaptação pelo DBA caso o acesso público ainda não esteja habilitado:
+-- grant select on public.produtos_novo to anon, authenticated;
+-- alter table public.produtos_novo enable row level security;
+-- create policy "Leitura pública dos produtos ativos" on public.produtos_novo
+-- for select to anon, authenticated using (ativo = true);
+-- NÃO aplique políticas sem validar conflito com as regras existentes.

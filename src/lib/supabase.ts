@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const anon = (import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY) as string | undefined;
 export const configured = Boolean(url && anon && url.startsWith('https://'));
 export const supabase: SupabaseClient | null = configured ? createClient(url!, anon!, {
   auth: { autoRefreshToken:true, persistSession:true, detectSessionInUrl:true }

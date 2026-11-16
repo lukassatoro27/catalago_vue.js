@@ -20,3 +20,51 @@ export async function list<T>(table:string, publicOnly=true):Promise<T[]>{
 export async function settings():Promise<Settings|null>{const {data,error}=await db().from('digital_catalog_settings').select('*').eq('ativo',true).limit(1).maybeSingle();if(error)throw error;return data as Settings|null;}
 export function whatsapp(phone:string,message:string){return `https://wa.me/${(phone||'5519993614366').replace(/\D/g,'')}?text=${encodeURIComponent(message)}`;}
 export async function uploadImage(file:File){const ext=file.name.split('.').pop()?.toLowerCase()||'jpg';if(!['jpg','jpeg','png','webp'].includes(ext))throw Error('Use JPG, PNG ou WebP');if(file.size>8*1024*1024)throw Error('Imagem acima de 8 MB');const path=`produtos/${crypto.randomUUID()}.${ext}`;const {error}=await db().storage.from('catalogo').upload(path,file,{contentType:file.type,upsert:false});if(error)throw error;return path;}
+
+
+// Produtos do e-commerce 2.0: somente leitura. Não grava nem replica produtos.
+export type EcommerceProductRow = {
+  id: string; slug?: string|null; nome: string; descricao?: string|null;
+  preco: number|string; promo_preco?: number|string|null; imagem?: string|null;
+  imagens_adicionais?: unknown; categorias?: unknown; ativo?: boolean|null;
+  destaque_loja?: boolean|null; created_at?: string|null;
+};
+export function normalizeEcommerceProduct(row: EcommerceProductRow): Product {
+  const cats = Array.isArray(row.categorias) ? row.categorias.filter((v):v is string=>typeof v==='string') : [];
+  const extra = Array.isArray(row.imagens_adicionais) ? row.imagens_adicionais.filter((v):v is string=>typeof v==='string') : [];
+  return {
+    id: String(row.id), nome: row.nome, slug: row.slug || String(row.id),
+    descricao: row.descricao||'', categoria:cats[0]||'', categoria_id:null,
+    preco:Number(row.preco)||0,
+    preco_promocional: row.promo_preco==null?null:Number(row.promo_preco),
+    imagem_url: row.imagem||'', imagem_2_url:extra[0]||'', imagem_3_url:extra[1]||'',
+    ativo:row.ativo!==false, destaque:!!row.destaque_loja, instagram_destaque:false,ordem:0
+  };
+}
+export async function listEcommerceProducts():Promise<Product[]> {
+  const PAGE=500, output:Product[]=[];
+  for(let offset=0;offset<10000;offset+=PAGE){
+    const {data,error}=await db().from('produtos_novo').select('id,slug,nome,descricao,preco,promo_preco,imagem,imagens_adicionais,categorias,ativo,destaque_loja,created_at')
+      .eq('ativo',true).order('created_at',{ascending:false}).range(offset,offset+PAGE-1);
+    if(error)throw new Error(`Não foi possível consultar produtos_novo: ${error.message}`);
+    const batch=(data||[]) as EcommerceProductRow[];
+    output.push(...batch.map(normalizeEcommerceProduct));
+    if(batch.length<PAGE)break;
+  }
+  return output;
+}
+export function ecommerceCategories(products:Product[]):Category[]{
+  const names=[...new Set(products.map(p=>p.categoria.trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  return names.map((name,index)=>({id:name,nome:name,slug:slugify(name),imagem_url:'',ativo:true,ordem:index}));
+}
+export async function getEcommerceProduct(slugOrId:string):Promise<Product|null>{
+  // Consulta por ID; se não houver, tenta slug. Sem interpolação em filtros SQL.
+  const client=db();
+  const {data:byId,error:idError}=await client.from('produtos_novo').select('*').eq('id',slugOrId).eq('ativo',true).maybeSingle();
+  if(byId)return normalizeEcommerceProduct(byId as EcommerceProductRow);
+  // Para UUID inválido o PostgREST pode retornar 22P02; tentamos slug normalmente.
+  if(idError && idError.code!=='22P02')throw idError;
+  const {data,error}=await client.from('produtos_novo').select('*').eq('slug',slugOrId).eq('ativo',true).maybeSingle();
+  if(error)throw error;
+  return data?normalizeEcommerceProduct(data as EcommerceProductRow):null;
+}
