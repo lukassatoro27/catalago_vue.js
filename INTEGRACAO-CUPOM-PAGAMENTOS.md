@@ -1,19 +1,23 @@
-# Integração Shopping de Flores → Catálogo Vue
+# Checkout Vue integrado à create_order informada em 23/11/2026
 
-## Implementado no ZIP
-- Cupom no checkout Vue aplicado/removido e revalidado ao confirmar, usando a regra original de desconto sobre produtos + frete.
-- `create_order` recebe `coupon_code`, `discount_amount`, `subtotal` e `p_total_amount` conforme checkout principal.
-- Checkout só abre o pagamento após ler e comparar `orders.total_amount` e metadados persistidos pelo servidor. Se leitura estiver bloqueada por RLS, não permite pagamento e mostra o ID do pedido.
-- Pix/cartão enviam o total confirmado do pedido; `check-payment-status` permanece.
-- Migração SQL de exemplo para validar desconto no banco, baseada no snapshot original do e-commerce.
-- Cópias das Edge Functions de pagamento com proteção contra valores divergentes, para revisão e deploy.
+## Atualização no frontend
+- Removido bloqueio `VITE_CATALOG_COUPON_BACKEND_READY`: a função atual `public.create_order` já valida o cupom com `FOR UPDATE`, confere regras, compara desconto e verifica o total. Não precisa ativar flag.
+- Código do cupom, `discount_amount`, `shipping_cost` e total são enviados à RPC existente; a função calcula e confere o valor.
+- Depois da RPC, o checkout tenta confirmar o pedido persistido. Pagamento só é habilitado após conferir valor, desconto e código. Se a leitura for negada por RLS, pagamento permanece bloqueado, com ID do pedido para atendimento.
+- Depois da criação do pedido, mesmo se a conferência der erro, o identificador é retido para evitar cliques que criem pedidos duplicados.
+- `generate-pix` usa valor confirmado pelo servidor e preserva `resume_token` dentro da sessão (a recuperação após recarregar ainda depende do fluxo oficial de `recover-checkout`).
+- Cartão utiliza `process-payment`, com total persistido; status deve ser confirmado pelo backend/webhook.
 
-## IMPORTANTE: NÃO ESTÁ PRONTO PARA COBRAR COM CUPOM SEM APLICAÇÃO DO BACKEND
-1. Conferir `SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='create_order';` contra `supabase/migrations/20261123_catalog_coupon_server_validation_REVIEW.sql`. NÃO aplicar a migração diretamente sem conciliar alterações recentes: a função é compartilhada.
-2. Implantar regra de cupom validada no banco; verificar RLS de leitura de `orders` para que o próprio comprador possa conferir o pedido sem revelar pedidos de outros.
-3. Somente depois de validar a proteção no backend, configurar `VITE_CATALOG_COUPON_BACKEND_READY=true` no ambiente de deploy do Vue (padrão é falso, e o pagamento com cupom fica bloqueado). Fazer code review/testes/deploy das funções em `supabase/functions/process-payment` e `supabase/functions/generate-pix`. As versões locais são snapshots da origem, não prova de que correspondem às atualmente publicadas.
-4. Criar consumo idempotente de `use_count` no webhook em evento de pagamento aprovado, com conciliação de estorno/cancelamento, se a contagem de uso do cupom for necessária. O snapshot não o implementa.
-5. Verificar correspondência da regra de frete embutido do catálogo e do site; este projeto mantém o cálculo original (frete separado).
-6. Testar cenário sem cupom e com cupom válido, expirado, desativado, limite atingido, desconto maior que total, alteração de preço/CEP, pedido repetido e falha no provedor.
+## Verificações OBRIGATÓRIAS antes de produção
+1. `create_order` compartilhada: a assinatura fornecida confere cupom, mas **não valida frete** (`shipping_cost` é recebido de `p_metadata`) e permite usar preços enviados pelo navegador para produto não encontrado; corrigir/avaliar no backend de produção sem interromper outros canais. Testar frete via `validate-delivery-cep` e valores de produtos; não presumir segurança integral.
+2. Conferir políticas RLS para leitura de `orders` pelo cliente. Sem acesso, a conferência visual bloqueia cobrança. Não abrir SELECT global para usuários anônimos apenas para habilitar isso: preferir uma Edge Function de confirmação com autorização por token de pedido.
+3. A função informada NÃO incrementa `coupons.use_count`: ativar contagem de uso atomicamente na aprovação, com idempotência do webhook, e considerar pedidos concorrentes.
+4. As cópias locais de `generate-pix` e `process-payment` são snapshots de referência: **não substituir versões publicadas** sem diff/revisão. O frontend chama as funções implantadas no Supabase.
+5. Mercado Pago pode rejeitar cobranças muito pequenas, como R$ 0,98. O site não deverá informar compra aprovada sem confirmação do backend. Cupom de 100% exige um fluxo próprio, que `create_order` atualmente bloqueia.
+6. Testar cupons válidos, expirados, limite esgotado, alteração de preço, cancelamento, idempotência, PIX e cartão em sandbox antes de publicar.
 
-Não publique secrets (`service_role`, token Mercado Pago) em variáveis `VITE_`.
+## Como executar
+`npm install` e `npm run build`. Configurar `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` (somente chave pública), sem guardar tokens privados do Mercado Pago no frontend.
+
+## Não aplicar migração anterior
+O arquivo SQL de exemplo antigo foi renomeado como `.sql.NAO_EXECUTAR.txt` para evitar sobregravar a função atual do Shopping de Flores, que já contém verificações mais recentes.

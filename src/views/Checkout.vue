@@ -8,7 +8,7 @@ import {validateCoupon,calculateCoupon,normalizeCouponCode,type Coupon} from '..
 
 const route=useRoute();const product=ref<Product|null>(null);const loading=ref(true);const busy=ref(false);const error=ref('');const step=ref(1);
 const qty=ref(1);const cepValidated=ref(false);const shipping=ref<number|null>(null);const periods=ref<any[]>([]);const periodId=ref('');
-const orderId=ref('');const method=ref<'pix'|'card'>('pix');const pix=ref<{payment_id:string;qr_code:string;pix_code:string}|null>(null);const result=ref('');
+const orderId=ref('');const pixResumeToken=ref('');const method=ref<'pix'|'card'>('pix');const pix=ref<{payment_id:string;qr_code:string;pix_code:string}|null>(null);const result=ref('');
 const form=ref({cartinha:'',recipientName:'',recipientPhone:'',zipCode:'',street:'',number:'',complement:'',neighborhood:'',city:'',state:'',deliveryDate:'',buyerName:'',email:'',cpf:'',buyerPhone:''});
 const card=ref({number:'',name:'',expiry:'',cvv:'',cpf:'',installments:1});
 const subtotal=computed(()=>product.value?Number((price(product.value)*qty.value).toFixed(2)):0);
@@ -67,7 +67,7 @@ function next(){error.value='';if(step.value===1){if(!form.value.recipientName||
  step.value=Math.min(4,step.value+1);}
 
 async function createOrder(){if(busy.value||orderId.value)return;
- error.value='';if(coupon.value && import.meta.env.VITE_CATALOG_COUPON_BACKEND_READY!=='true'){error.value='A aplicação de cupons está aguardando a ativação da validação segura no Supabase. O pedido sem cupom continua disponível.';return;}if(sundayBlocked()){error.value='Vendas pausadas aos domingos.';return;}
+ error.value='';if(sundayBlocked()){error.value='Vendas pausadas aos domingos.';return;}
  if(!product.value||!cepValidated.value||shipping.value===null||!validPeriod()){error.value='Confira CEP, frete, data e período antes de prosseguir.';return;}
  busy.value=true;
  try{
@@ -84,6 +84,8 @@ async function createOrder(){if(busy.value||orderId.value)return;
   const {data,error:rpcError}=await db().rpc('create_order',payload);
   if(rpcError)throw rpcError;
   if(!data?.id)throw Error('Não foi possível criar o pedido.');
+  // Guardar o ID imediatamente: se a conferência falhar, não duplicar pedidos ao tentar novamente.
+  orderId.value=String(data.id);
   const persisted=await db().from('orders').select('id,total_amount,metadata').eq('id',String(data.id)).maybeSingle();
   if((persisted.error || !persisted.data) && coupon.value)throw Error('Pedido criado, mas não foi possível conferir o valor autorizado. Não gere novo pedido; contate o atendimento com o ID '+String(data.id));
   const official=Number(persisted.data?.total_amount??data.total_amount);
@@ -93,14 +95,15 @@ async function createOrder(){if(busy.value||orderId.value)return;
     throw Error('Pedido '+String(data.id)+' registrado com divergência no desconto ou no total. Pagamento bloqueado; procure o atendimento antes de tentar novamente.');
   }
   confirmedTotal.value=official;
-  orderId.value=String(data.id);step.value=5;
+  step.value=5;
   if(form.value.cartinha){void db().functions.invoke('sync-ecommerce-cartinha',{body:{order_id:orderId.value}});}
- }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{busy.value=false;}}
+ }catch(e){error.value=orderId.value?`Pedido ${orderId.value} registrado, mas o pagamento está bloqueado: ${e instanceof Error?e.message:String(e)} Entre em contato com o atendimento; não refaça o pedido.`:(e instanceof Error?e.message:String(e))}finally{busy.value=false;}}
 async function generatePix(){if(busy.value||!orderId.value||pix.value)return;busy.value=true;error.value='';try{
- const r=await invokePayment<any>('generate-pix',{orderId:orderId.value,amount:paymentTotal.value,description:`Pedido Catálogo #${orderId.value}`,userEmail:form.value.email,discount:0});const d=r.data||r;
+ const r=await invokePayment<any>('generate-pix',{orderId:orderId.value,amount:paymentTotal.value,description:`Pedido Catálogo #${orderId.value}`,userEmail:form.value.email,...(pixResumeToken.value?{resumeToken:pixResumeToken.value}:{})});const d=r.data||r;
+ if(d.resume_token)pixResumeToken.value=String(d.resume_token);
  const qr=d.qr_code||d.qr_code_base64;const copy=d.pix_code||d.qr_code_text||d.copy_paste;
- if(!qr||!copy)throw Error('O servidor não retornou todos os dados do Pix.');
- pix.value={payment_id:String(d.payment_id||d.id||''),qr_code:String(qr).startsWith('data:')?qr:`data:image/jpeg;base64,${qr}`,pix_code:copy};
+ if(!qr||!copy)throw Error('O servidor não retornou todos os dados do Pix. Consulte o status antes de tentar novamente.');
+ pix.value={payment_id:String(d.payment_id||d.id||''),qr_code:String(qr).startsWith('data:')?qr:`data:image/png;base64,${qr}`,pix_code:String(copy)};
  }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{busy.value=false;}}
 async function payCard(){if(busy.value||!orderId.value)return;error.value='';result.value='';
  if(digits(card.value.number).length<13||!card.value.name.trim()||digits(card.value.cvv).length<3||digits(card.value.cpf).length!==11||!/^\d{2}\/\d{2,4}$/.test(card.value.expiry)){error.value='Confira os dados do cartão, validade, CVV e CPF.';return;}
@@ -140,5 +143,5 @@ async function checkStatus(){if(!orderId.value)return;busy.value=true;error.valu
 <p v-if="couponMessage" class="catalog-coupon-note" role="status">{{couponMessage}}</p>
 <div v-if="coupon" class="catalog-coupon-applied"><span>✓ {{coupon.code}}</span><button type="button" class="btn" :disabled="Boolean(orderId)" @click="removeCoupon">Remover</button></div></div>
 <p v-if="coupon" class="catalog-coupon-discount">Desconto <strong>− {{money(previewDiscount)}}</strong></p>
-<div class="checkout-total">Total <strong>{{money(total)}}</strong></div><small v-if="coupon && !orderId" class="catalog-coupon-note">O desconto é confirmado pelo servidor na criação do pedido.</small><small>Pagamento processado pelo Mercado Pago, usando as funções do e-commerce Shopping de Flores.</small></aside></div></div>
+<div class="checkout-total">Total <strong>{{money(orderId ? paymentTotal : total)}}</strong></div><small v-if="coupon && !orderId" class="catalog-coupon-note">O desconto será validado pelo Supabase ao confirmar o pedido.</small><small>Pagamento processado pelo Mercado Pago, usando as funções do e-commerce Shopping de Flores.</small></aside></div></div>
 </template>
