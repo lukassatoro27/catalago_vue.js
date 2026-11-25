@@ -14,7 +14,7 @@ const card=ref({number:'',name:'',expiry:'',cvv:'',cpf:'',installments:1});
 const subtotal=computed(()=>product.value?Number((price(product.value)*qty.value).toFixed(2)):0);
 const grossTotal=computed(()=>Number((subtotal.value+(shipping.value??0)).toFixed(2)));
 const couponInput=ref('');const coupon=ref<Coupon|null>(null);const couponBusy=ref(false);const couponMessage=ref('');
-const couponBase=computed(()=>subtotal.value);
+const couponBase=computed(()=>grossTotal.value);
 const previewDiscount=computed(()=>coupon.value?calculateCoupon(coupon.value,couponBase.value):0);
 const total=computed(()=>Number((grossTotal.value-previewDiscount.value).toFixed(2)));
 // O total visual é uma prévia; create_order DEVE validar o cupom no banco.
@@ -23,7 +23,7 @@ const confirmedTotal=ref<number|null>(null);
 const paymentTotal=computed(()=>confirmedTotal.value??total.value);
 async function applyCoupon(){
  couponMessage.value='';couponBusy.value=true;
- try{coupon.value=await validateCoupon(couponInput.value,couponBase.value);couponInput.value=normalizeCouponCode(couponInput.value);couponMessage.value='Cupom aplicado! O desconto será conferido novamente ao confirmar o pedido.';}
+ try{coupon.value=await validateCoupon(couponInput.value,couponBase.value);couponInput.value=normalizeCouponCode(couponInput.value);couponMessage.value='Cupom aplicado sobre o total, incluindo a entrega. O desconto será conferido ao confirmar o pedido.';}
  catch(e){coupon.value=null;couponMessage.value=e instanceof Error?e.message:String(e);}
  finally{couponBusy.value=false;}
 }
@@ -152,6 +152,6 @@ async function checkStatus(){if(!orderId.value)return;busy.value=true;error.valu
 <div class="catalog-coupon"><label for="catalog-coupon-code">Tem um cupom de desconto?</label><div class="catalog-coupon-row"><input id="catalog-coupon-code" v-model="couponInput" :disabled="busy||couponBusy||Boolean(orderId)" maxlength="80" placeholder="Código do cupom" autocomplete="off" @keyup.enter="applyCoupon"/><button type="button" class="btn primary" :disabled="busy||couponBusy||Boolean(orderId)||!couponInput.trim()" @click="applyCoupon">{{couponBusy?'Verificando...':'Aplicar'}}</button></div>
 <p v-if="couponMessage" class="catalog-coupon-note" role="status">{{couponMessage}}</p>
 <div v-if="coupon" class="catalog-coupon-applied"><span>✓ {{coupon.code}}</span><button type="button" class="btn" :disabled="busy||couponBusy||Boolean(orderId)" @click="removeCoupon">Remover</button></div></div>
-<p v-if="coupon" class="catalog-coupon-discount">Desconto <strong>− {{money(previewDiscount)}}</strong></p>
+<p v-if="coupon" class="catalog-coupon-discount">Desconto sobre o total <strong>− {{money(previewDiscount)}}</strong></p>
 <div class="checkout-total">Total a pagar <strong>{{money(orderId ? paymentTotal : total)}}</strong></div><small v-if="coupon && !orderId" class="catalog-coupon-note">O desconto será validado pelo Supabase ao confirmar o pedido.</small><small>Pagamento processado pelo Mercado Pago, usando as funções do e-commerce Shopping de Flores.</small></aside></div></div>
 </template>
