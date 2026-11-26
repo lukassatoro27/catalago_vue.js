@@ -14,21 +14,35 @@ const card=ref({number:'',name:'',expiry:'',cvv:'',cpf:'',installments:1});
 const subtotal=computed(()=>product.value?Number((price(product.value)*qty.value).toFixed(2)):0);
 const grossTotal=computed(()=>Number((subtotal.value+(shipping.value??0)).toFixed(2)));
 const couponInput=ref('');const coupon=ref<Coupon|null>(null);const couponBusy=ref(false);const couponMessage=ref('');
-const couponBase=computed(()=>grossTotal.value);
-const previewDiscount=computed(()=>coupon.value?calculateCoupon(coupon.value,couponBase.value):0);
+const firstDiscount=ref(0);
+const eligibleSubtotal=computed(()=>coupon.value?.allow_promotional_products===false && product.value && price(product.value)<product.value.preco ? 0 : subtotal.value);
+const previewDiscount=computed(()=>coupon.value ? (coupon.value.is_first_purchase ? firstDiscount.value : calculateCoupon(coupon.value,grossTotal.value)) : 0);
 const total=computed(()=>Number((grossTotal.value-previewDiscount.value).toFixed(2)));
-// O total visual é uma prévia; create_order DEVE validar o cupom no banco.
-// Conferimos o total persistido antes de oferecer qualquer forma de pagamento.
 const confirmedTotal=ref<number|null>(null);
 const paymentTotal=computed(()=>confirmedTotal.value??total.value);
+async function authorizeFirst(action:'check'|'reserve', userId:string|null, id:string|null=null){
+ const c=coupon.value;if(!c?.is_first_purchase)throw Error('Cupom de primeira compra não selecionado.');
+ if(form.value.cpf.replace(/\D/g,'').length!==11)throw Error('Informe o CPF do comprador na etapa Seus Dados antes de aplicar este cupom.');
+ if(eligibleSubtotal.value<=0)throw Error('Este produto não é elegível para o benefício.');
+ const r=await invokePayment<any>('validate-first-purchase',{cpf:form.value.cpf,email:form.value.email||null,phone:form.value.buyerPhone||null,userId,orderId:id,cartSubtotal:eligibleSubtotal.value,action});
+ const amount=Number(r.coupon?.discount_amount);
+ if(!r.valid||!r.eligible||normalizeCouponCode(String(r.coupon?.code||''))!==c.code||!Number.isFinite(amount)||amount<=0||amount>eligibleSubtotal.value||(action==='reserve'&&!r.reservation))throw Error(r.message||'Não foi possível autorizar este cupom.');
+ return amount;
+}
 async function applyCoupon(){
- couponMessage.value='';couponBusy.value=true;
- try{coupon.value=await validateCoupon(couponInput.value,couponBase.value);couponInput.value=normalizeCouponCode(couponInput.value);couponMessage.value='Cupom aplicado sobre o total, incluindo a entrega. O desconto será conferido ao confirmar o pedido.';}
- catch(e){coupon.value=null;couponMessage.value=e instanceof Error?e.message:String(e);}
+ if(busy.value||couponBusy.value||orderId.value)return;
+ couponMessage.value='';couponBusy.value=true;firstDiscount.value=0;coupon.value=null;
+ try{
+ if(!cepValidated.value)throw Error('Valide o CEP antes de aplicar o cupom.');
+ coupon.value=await validateCoupon(couponInput.value,grossTotal.value);
+ if(coupon.value.require_cpf_validation&&!coupon.value.is_first_purchase)throw Error('Este cupom exige uma validação adicional não disponível no catálogo.');
+ if(coupon.value.is_first_purchase){const {data,error}=await db().auth.getSession();if(error)throw error;firstDiscount.value=await authorizeFirst('check',data.session?.user.id??null);}
+ couponInput.value=coupon.value.code;couponMessage.value=coupon.value.is_first_purchase?'Benefício de primeira compra validado sobre os produtos.':'Cupom aplicado sobre o total, incluindo a entrega.';
+ }catch(e){coupon.value=null;firstDiscount.value=0;couponMessage.value=e instanceof Error?e.message:String(e);}
  finally{couponBusy.value=false;}
 }
-function removeCoupon(){coupon.value=null;couponInput.value='';couponMessage.value='Cupom removido.';}
-watch(grossTotal,async()=>{if(!coupon.value)return;try{coupon.value=await validateCoupon(coupon.value.code,couponBase.value);couponMessage.value='Cupom revalidado após mudança no pedido.';}catch(e){coupon.value=null;couponMessage.value=e instanceof Error?e.message:String(e);}});
+function removeCoupon(){coupon.value=null;firstDiscount.value=0;couponInput.value='';couponMessage.value='Cupom removido.';}
+watch([grossTotal,()=>form.value.cpf,()=>form.value.email,()=>form.value.buyerPhone],()=>{if(coupon.value&&!orderId.value){coupon.value=null;firstDiscount.value=0;couponMessage.value='Dados do pedido alterados. Aplique o cupom novamente.';}});
 
 const selectedPeriod=computed(()=>periods.value.find(p=>String(p.id)===periodId.value));
 const digits=(v:string)=>v.replace(/\D/g,'');
@@ -77,20 +91,25 @@ async function createOrder(){if(busy.value||couponBusy.value||orderId.value)retu
   if(Math.abs(price(fresh)-price(product.value))>0.001){product.value=fresh;throw Error('O preço foi atualizado. Confira o novo total e confirme novamente.');}
   // Revalida no momento da compra; o banco faz a validação final e autoritativa.
   const previousTotal=total.value;
-  if(coupon.value)coupon.value=await validateCoupon(coupon.value.code, couponBase.value);
-  const discount=coupon.value?calculateCoupon(coupon.value,couponBase.value):0;
+  const {data:{session},error:sessionError}=await db().auth.getSession();
+  if(sessionError)throw sessionError;
+  const userId=session?.user.id??null;
+  if(coupon.value){
+    coupon.value=await validateCoupon(coupon.value.code,grossTotal.value);
+    if(coupon.value.require_cpf_validation&&!coupon.value.is_first_purchase)throw Error('Cupom exige validação adicional.');
+    if(coupon.value.is_first_purchase)firstDiscount.value=await authorizeFirst('reserve',userId);
+  }
+  const discount=previewDiscount.value;
   const expectedTotal=Number((grossTotal.value-discount).toFixed(2));
   if(expectedTotal!==previousTotal)throw Error('O desconto foi atualizado. Confira o total e confirme novamente.');
   if(expectedTotal<=0)throw Error('Pedido sem valor a pagar exige atendimento.');
-  const {data:{session},error:sessionError}=await db().auth.getSession();
-  if(sessionError)throw sessionError;
   const p=selectedPeriod.value;
   const item={id:fresh.id,product_id:fresh.id,product_name:fresh.nome,name:fresh.nome,image_url:fresh.imagem_url,price:price(fresh),quantity:qty.value,size:null,addons:[],bouquet_composition:null,card:form.value.cartinha||null,shippingCost:shipping.value,deliveryType:'standard',expressPrice:0};
   const payload={p_user_id:session?.user.id??null,p_total_amount:expectedTotal,p_items:[item],p_delivery_address:{name:form.value.recipientName,recipientName:form.value.recipientName,phone:form.value.recipientPhone,street:form.value.street,number:form.value.number,complement:form.value.complement,neighborhood:form.value.neighborhood,district:form.value.neighborhood,city:form.value.city,state:form.value.state,zipCode:digits(form.value.zipCode)},p_payment_method:'pending',p_delivery_type:'standard',p_delivery_period:p.period_name,p_delivery_date:form.value.deliveryDate,p_buyer_phone:form.value.buyerPhone,p_recipient_phone:form.value.recipientPhone,p_seller_id:null,p_metadata:{email:form.value.email,cpf:digits(form.value.cpf),buyer_name:form.value.buyerName,recipient_name:form.value.recipientName,delivery_date:form.value.deliveryDate,delivery_period:p.period_name,delivery_period_id:p.id,delivery_period_start:p.start_time,delivery_period_end:p.end_time,cartinha:form.value.cartinha||null,shipping_cost:shipping.value,express_shipping_cost:0,shipping_type:'business-days',delivery_type:'standard',subtotal:grossTotal.value,coupon_code:coupon.value?.code||null,discount_amount:discount,tax:0,origin:'catalogo_vue'}};
   const {data,error:rpcError}=await db().rpc('create_order',payload);
   if(rpcError){
     console.error('Checkout.create_order',{code:rpcError.code,message:rpcError.message,details:rpcError.details,hint:rpcError.hint});
-    if(rpcError.message?.includes('COUPON_MISMATCH'))throw Error('O servidor não confirmou o desconto deste cupom. Remova o cupom para continuar sem desconto ou fale com o atendimento. Nenhum pedido foi criado.');
+    if(rpcError.message?.includes('COUPON_MISMATCH'))throw Error('O Supabase retornou uma regra de desconto diferente da autorização do catálogo. Nenhum pedido foi criado. O atendimento deve conferir a função create_order vigente.');
     throw Error(rpcError.message||'Não foi possível criar o pedido.');
   }
   if(!data?.id)throw Error('Não foi possível criar o pedido.');
@@ -104,6 +123,7 @@ async function createOrder(){if(busy.value||couponBusy.value||orderId.value)retu
   if(!Number.isFinite(official)||Math.abs(official-expectedTotal)>0.009 || (coupon.value&&(serverCoupon!==coupon.value.code||Math.abs(serverDiscount-discount)>0.009))){
     throw Error('Pedido '+String(data.id)+' registrado com divergência no desconto ou no total. Pagamento bloqueado; procure o atendimento antes de tentar novamente.');
   }
+  if(coupon.value?.is_first_purchase){const bound=await authorizeFirst('reserve',userId,orderId.value);if(Math.abs(bound-discount)>0.009)throw Error('Reserva do benefício divergente.');}
   confirmedTotal.value=official;
   step.value=5;
   if(form.value.cartinha){void db().functions.invoke('sync-ecommerce-cartinha',{body:{order_id:orderId.value}});}
@@ -152,6 +172,6 @@ async function checkStatus(){if(!orderId.value)return;busy.value=true;error.valu
 <div class="catalog-coupon"><label for="catalog-coupon-code">Tem um cupom de desconto?</label><div class="catalog-coupon-row"><input id="catalog-coupon-code" v-model="couponInput" :disabled="busy||couponBusy||Boolean(orderId)" maxlength="80" placeholder="Código do cupom" autocomplete="off" @keyup.enter="applyCoupon"/><button type="button" class="btn primary" :disabled="busy||couponBusy||Boolean(orderId)||!couponInput.trim()" @click="applyCoupon">{{couponBusy?'Verificando...':'Aplicar'}}</button></div>
 <p v-if="couponMessage" class="catalog-coupon-note" role="status">{{couponMessage}}</p>
 <div v-if="coupon" class="catalog-coupon-applied"><span>✓ {{coupon.code}}</span><button type="button" class="btn" :disabled="busy||couponBusy||Boolean(orderId)" @click="removeCoupon">Remover</button></div></div>
-<p v-if="coupon" class="catalog-coupon-discount">Desconto sobre o total <strong>− {{money(previewDiscount)}}</strong></p>
+<p v-if="coupon" class="catalog-coupon-discount">{{coupon.is_first_purchase?'Desconto de primeira compra':'Desconto sobre o total'}} <strong>− {{money(previewDiscount)}}</strong></p>
 <div class="checkout-total">Total a pagar <strong>{{money(orderId ? paymentTotal : total)}}</strong></div><small v-if="coupon && !orderId" class="catalog-coupon-note">O desconto será validado pelo Supabase ao confirmar o pedido.</small><small>Pagamento processado pelo Mercado Pago, usando as funções do e-commerce Shopping de Flores.</small></aside></div></div>
 </template>
