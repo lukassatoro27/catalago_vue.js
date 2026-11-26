@@ -1,5 +1,5 @@
 import {db} from './supabase';
-export type Product={id:string;nome:string;slug:string;descricao:string;categoria:string;categoria_id:string|null;preco:number;preco_promocional:number|null;imagem_url:string;imagem_2_url:string;imagem_3_url:string;ativo:boolean;destaque:boolean;instagram_destaque:boolean;ordem:number};
+export type Product={id:string;nome:string;slug:string;descricao:string;categoria:string;categorias?:string[];categoria_id:string|null;preco:number;preco_promocional:number|null;imagem_url:string;imagem_2_url:string;imagem_3_url:string;ativo:boolean;destaque:boolean;instagram_destaque:boolean;ordem:number};
 export type Category={id:string;nome:string;slug:string;imagem_url:string;ativo:boolean;ordem:number};
 export type Settings={id:string;whatsapp_vendas:string;nome_empresa:string;nome_equipe:string;instagram:string;logo_url:string;texto_topo:string;texto_secundario:string;texto_whatsapp:string;entrega_expressa:boolean;ativo:boolean};
 export type Frete={id:string;cidade:string;custo:number;custo_expresso:number;estrategia:string;status:string};
@@ -34,7 +34,7 @@ export function normalizeEcommerceProduct(row: EcommerceProductRow): Product {
   const extra = Array.isArray(row.imagens_adicionais) ? row.imagens_adicionais.filter((v):v is string=>typeof v==='string') : [];
   return {
     id: String(row.id), nome: row.nome, slug: row.slug || String(row.id),
-    descricao: row.descricao||'', categoria:cats[0]||'', categoria_id:null,
+    descricao: row.descricao||'', categoria:cats[0]||'', categorias:cats, categoria_id:null,
     preco:Number(row.preco)||0,
     preco_promocional: row.promo_preco==null?null:Number(row.promo_preco),
     imagem_url: row.imagem||'', imagem_2_url:extra[0]||'', imagem_3_url:extra[1]||'',
@@ -54,7 +54,7 @@ export async function listEcommerceProducts():Promise<Product[]> {
   return output;
 }
 export function ecommerceCategories(products:Product[]):Category[]{
-  const names=[...new Set(products.map(p=>p.categoria.trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  const names=[...new Set(products.flatMap(p=>(p.categorias||[p.categoria]).map(c=>c.trim())).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
   return names.map((name,index)=>({id:name,nome:name,slug:slugify(name),imagem_url:'',ativo:true,ordem:index}));
 }
 export async function getEcommerceProduct(slugOrId:string):Promise<Product|null>{
