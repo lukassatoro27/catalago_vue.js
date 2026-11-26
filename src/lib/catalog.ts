@@ -5,7 +5,7 @@ export type Settings={id:string;whatsapp_vendas:string;nome_empresa:string;nome_
 export type Frete={id:string;cidade:string;custo:number;custo_expresso:number;estrategia:string;status:string};
 export type Banner={id:string;titulo:string;subtitulo:string;imagem_desktop:string;imagem_mobile:string;link:string;texto_botao:string;ativo:boolean;ordem:number};
 export const tables=['digital_catalog_products','digital_catalog_categories','digital_catalog_banners','digital_catalog_settings','fretes_cidades','black_friday_promos','pedidos','pagamentos'] as const;
-export const logoDefault='https://horizons-cdn.hostinger.com/51e8ca54-086c-4e6b-8d18-ad5ff2de26af/3fc2ac3baef9b9193fc50b93c5304047.png';
+export const logoDefault='https://horizons-cdn.hostinger.com/01257f8f-d383-4d1c-8da8-99733736efa7/8dd01cdf4c4175e4fee7f7cbc2f00422.jpg';
 export const heroDefault='https://images.hostinger.com/06430671-c889-4dbb-91ee-33d3de19b956.png';
 export const money=(n:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(n)||0);
 export const price=(p:Product)=>p.preco_promocional!=null&&p.preco_promocional>0&&p.preco_promocional<p.preco?p.preco_promocional:p.preco;
