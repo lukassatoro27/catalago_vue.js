@@ -39,5 +39,6 @@ export async function validateCoupon(code:string, cartTotal:number):Promise<Coup
 export function calculateCoupon(coupon:Coupon, amount:number):number {
   const base=Math.max(0,Number(amount)||0);
   const raw=coupon.discount_type==='percentage'?base*Number(coupon.discount_value)/100:Number(coupon.discount_value);
-  return Number(Math.min(base,Math.max(0,raw)).toFixed(2));
+  const cents = Math.round((Math.min(base,Math.max(0,raw)) + Number.EPSILON)*100);
+  return cents/100;
 }

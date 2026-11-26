@@ -15,11 +15,12 @@ const subtotal=computed(()=>product.value?Number((price(product.value)*qty.value
 const grossTotal=computed(()=>Number((subtotal.value+(shipping.value??0)).toFixed(2)));
 const couponInput=ref('');const coupon=ref<Coupon|null>(null);const couponBusy=ref(false);const couponMessage=ref('');
 const firstDiscount=ref(0);
-const eligibleSubtotal=computed(()=>coupon.value?.allow_promotional_products===false && product.value && price(product.value)<product.value.preco ? 0 : subtotal.value);
+const eligibleSubtotal=computed(()=>coupon.value?.allow_promotional_products===false && product.value && price(product.value)<product.value.preco ? 0 : grossTotal.value);
 const previewDiscount=computed(()=>coupon.value ? (coupon.value.is_first_purchase ? firstDiscount.value : calculateCoupon(coupon.value,grossTotal.value)) : 0);
 const total=computed(()=>Number((grossTotal.value-previewDiscount.value).toFixed(2)));
 const confirmedTotal=ref<number|null>(null);
 const paymentTotal=computed(()=>confirmedTotal.value??total.value);
+function authorizedPaymentAmount(){if(confirmedTotal.value===null||!Number.isFinite(confirmedTotal.value)||confirmedTotal.value<=0||step.value!==5)throw Error("O valor do pagamento ainda não foi confirmado pelo servidor.");return confirmedTotal.value;}
 async function authorizeFirst(action:'check'|'reserve', userId:string|null, id:string|null=null){
  const c=coupon.value;if(!c?.is_first_purchase)throw Error('Cupom de primeira compra não selecionado.');
  if(form.value.cpf.replace(/\D/g,'').length!==11)throw Error('Informe o CPF do comprador na etapa Seus Dados antes de aplicar este cupom.');
@@ -36,8 +37,9 @@ async function applyCoupon(){
  if(!cepValidated.value)throw Error('Valide o CEP antes de aplicar o cupom.');
  coupon.value=await validateCoupon(couponInput.value,grossTotal.value);
  if(coupon.value.require_cpf_validation&&!coupon.value.is_first_purchase)throw Error('Este cupom exige uma validação adicional não disponível no catálogo.');
+ if(coupon.value.allow_promotional_products===false && product.value && price(product.value)<product.value.preco)throw Error('Este cupom não permite produtos promocionais.');
  if(coupon.value.is_first_purchase){const {data,error}=await db().auth.getSession();if(error)throw error;firstDiscount.value=await authorizeFirst('check',data.session?.user.id??null);}
- couponInput.value=coupon.value.code;couponMessage.value=coupon.value.is_first_purchase?'Benefício de primeira compra validado sobre os produtos.':'Cupom aplicado sobre o total, incluindo a entrega.';
+ couponInput.value=coupon.value.code;couponMessage.value=coupon.value.is_first_purchase?'Benefício de primeira compra validado sobre o total, incluindo a entrega.':'Cupom aplicado sobre o total, incluindo a entrega.';
  }catch(e){coupon.value=null;firstDiscount.value=0;couponMessage.value=e instanceof Error?e.message:String(e);}
  finally{couponBusy.value=false;}
 }
@@ -89,6 +91,7 @@ async function createOrder(){if(busy.value||couponBusy.value||orderId.value)retu
   // Consulta preço novamente: o frontend nunca é fonte autorizada do valor.
   const fresh=await getEcommerceProduct(product.value.id);if(!fresh)throw Error('Produto indisponível.');
   if(Math.abs(price(fresh)-price(product.value))>0.001){product.value=fresh;throw Error('O preço foi atualizado. Confira o novo total e confirme novamente.');}
+  product.value=fresh;
   // Revalida no momento da compra; o banco faz a validação final e autoritativa.
   const previousTotal=total.value;
   const {data:{session},error:sessionError}=await db().auth.getSession();
@@ -97,7 +100,12 @@ async function createOrder(){if(busy.value||couponBusy.value||orderId.value)retu
   if(coupon.value){
     coupon.value=await validateCoupon(coupon.value.code,grossTotal.value);
     if(coupon.value.require_cpf_validation&&!coupon.value.is_first_purchase)throw Error('Cupom exige validação adicional.');
-    if(coupon.value.is_first_purchase)firstDiscount.value=await authorizeFirst('reserve',userId);
+    if(coupon.value.allow_promotional_products===false && price(fresh)<fresh.preco)throw Error('Este cupom não permite produtos promocionais.');
+    if(coupon.value.is_first_purchase){
+      firstDiscount.value=await authorizeFirst('check',userId);
+      if(total.value!==previousTotal)throw Error('O desconto foi atualizado. Confira o total e confirme novamente.');
+      firstDiscount.value=await authorizeFirst('reserve',userId);
+    }
   }
   const discount=previewDiscount.value;
   const expectedTotal=Number((grossTotal.value-discount).toFixed(2));
@@ -115,11 +123,16 @@ async function createOrder(){if(busy.value||couponBusy.value||orderId.value)retu
   if(!data?.id)throw Error('Não foi possível criar o pedido.');
   // Guardar o ID imediatamente: se a conferência falhar, não duplicar pedidos ao tentar novamente.
   orderId.value=String(data.id);
-  const persisted=await db().from('orders').select('id,total_amount,metadata').eq('id',String(data.id)).maybeSingle();
-  if((persisted.error || !persisted.data) && coupon.value)throw Error('Pedido criado, mas não foi possível conferir o valor autorizado. Não gere novo pedido; contate o atendimento com o ID '+String(data.id));
-  const official=Number(persisted.data?.total_amount??data.total_amount);
-  const serverCoupon=String(persisted.data?.metadata?.coupon_code||'').toUpperCase();
-  const serverDiscount=Number(persisted.data?.metadata?.discount_amount||0);
+  // A RPC retorna o registro inserido pelo servidor. Não exige SELECT público em orders.
+  let persisted=data;
+  if(data.total_amount==null || !data.metadata){
+    const lookup=await db().from('orders').select('id,total_amount,metadata').eq('id',orderId.value).maybeSingle();
+    if(lookup.error||!lookup.data)throw Error('Não foi possível confirmar o valor autorizado do pedido.');
+    persisted=lookup.data;
+  }
+  const official=Number(persisted.total_amount);
+  const serverCoupon=normalizeCouponCode(String(persisted.metadata?.coupon_code||''));
+  const serverDiscount=Number(persisted.metadata?.discount_amount||0);
   if(!Number.isFinite(official)||Math.abs(official-expectedTotal)>0.009 || (coupon.value&&(serverCoupon!==coupon.value.code||Math.abs(serverDiscount-discount)>0.009))){
     throw Error('Pedido '+String(data.id)+' registrado com divergência no desconto ou no total. Pagamento bloqueado; procure o atendimento antes de tentar novamente.');
   }
@@ -128,14 +141,14 @@ async function createOrder(){if(busy.value||couponBusy.value||orderId.value)retu
   step.value=5;
   if(form.value.cartinha){void db().functions.invoke('sync-ecommerce-cartinha',{body:{order_id:orderId.value}});}
  }catch(e){error.value=orderId.value?`Pedido ${orderId.value} registrado, mas o pagamento está bloqueado: ${e instanceof Error?e.message:String(e)} Entre em contato com o atendimento; não refaça o pedido.`:(e instanceof Error?e.message:String(e))}finally{busy.value=false;}}
-async function generatePix(){if(busy.value||!orderId.value||pix.value)return;busy.value=true;error.value='';try{
- const r=await invokePayment<any>('generate-pix',{orderId:orderId.value,amount:paymentTotal.value,description:`Pedido Catálogo #${orderId.value}`,userEmail:form.value.email,...(pixResumeToken.value?{resumeToken:pixResumeToken.value}:{})});const d=r.data||r;
+async function generatePix(){if(busy.value||!orderId.value||confirmedTotal.value===null||pix.value)return;busy.value=true;error.value='';try{
+ const r=await invokePayment<any>('generate-pix',{orderId:orderId.value,amount:authorizedPaymentAmount(),description:`Pedido Catálogo #${orderId.value}`,userEmail:form.value.email,...(pixResumeToken.value?{resumeToken:pixResumeToken.value}:{})});const d=r.data||r;
  if(d.resume_token)pixResumeToken.value=String(d.resume_token);
  const qr=d.qr_code||d.qr_code_base64;const copy=d.pix_code||d.qr_code_text||d.copy_paste;
  if(!qr||!copy)throw Error('O servidor não retornou todos os dados do Pix. Consulte o status antes de tentar novamente.');
  pix.value={payment_id:String(d.payment_id||d.id||''),qr_code:String(qr).startsWith('data:')?qr:`data:image/png;base64,${qr}`,pix_code:String(copy)};
  }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{busy.value=false;}}
-async function payCard(){if(busy.value||!orderId.value)return;error.value='';result.value='';
+async function payCard(){if(busy.value||!orderId.value||confirmedTotal.value===null)return;error.value='';result.value='';
  if(digits(card.value.number).length<13||!card.value.name.trim()||digits(card.value.cvv).length<3||digits(card.value.cpf).length!==11||!/^\d{2}\/\d{2,4}$/.test(card.value.expiry)){error.value='Confira os dados do cartão, validade, CVV e CPF.';return;}
  const brand=paymentMethod(card.value.number);if(!brand){error.value='Bandeira não identificada. Use um cartão compatível.';return;}
  busy.value=true;try{
@@ -143,7 +156,7 @@ async function payCard(){if(busy.value||!orderId.value)return;error.value='';res
   const token=await mp.createCardToken({cardNumber:digits(card.value.number),cardholderName:card.value.name,cardExpirationMonth:month,cardExpirationYear:year.length===2?`20${year}`:year,securityCode:digits(card.value.cvv),identificationType:'CPF',identificationNumber:digits(card.value.cpf)});
   if(!token?.id)throw Error('Não foi possível validar os dados do cartão.');
   const parts=card.value.name.trim().split(/\s+/);
-  const r=await invokePayment<any>('process-payment',{orderId:orderId.value,token:token.id,amount:paymentTotal.value,installments:Number(card.value.installments)||1,paymentMethodId:brand,payer:{email:form.value.email,first_name:parts[0],last_name:parts.slice(1).join(' ')||parts[0],identification:{type:'CPF',number:digits(card.value.cpf)}},idempotencyKey:crypto.randomUUID()});
+  const r=await invokePayment<any>('process-payment',{orderId:orderId.value,token:token.id,amount:authorizedPaymentAmount(),installments:Number(card.value.installments)||1,paymentMethodId:brand,payer:{email:form.value.email,first_name:parts[0],last_name:parts.slice(1).join(' ')||parts[0],identification:{type:'CPF',number:digits(card.value.cpf)}},idempotencyKey:crypto.randomUUID()});
   const status=String(r.status||r.mapped_status||'').toLowerCase();result.value=['approved','pago'].includes(status)?'Pagamento aprovado! Pedido confirmado.':(['pending','in_process','em_analise'].includes(status)?'Pagamento em análise. Aguarde a confirmação.':'Pagamento não aprovado. Confira o status antes de tentar novamente.');
  }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{card.value.number='';card.value.cvv='';busy.value=false;}}
 async function copyPix(){if(pix.value)await navigator.clipboard.writeText(pix.value.pix_code);}
@@ -164,8 +177,8 @@ async function checkStatus(){if(!orderId.value)return;busy.value=true;error.valu
 <section v-if="step===2" class="checkout-panel"><h2>2. Data e período de entrega</h2><label>Data de entrega *<input v-model="form.deliveryDate" type="date" :min="earliestDate"/></label><label>Período disponível *<select v-model="periodId"><option value="">Selecione</option><option v-for="p in periods" :key="p.id" :value="String(p.id)">{{p.period_name}} ({{p.start_time}} – {{p.end_time}})</option></select></label><p>Os horários estão sujeitos às regras e limites de entrega do Shopping de Flores.</p><div class="checkout-actions"><button class="btn" @click="step=1">← Voltar</button><button class="btn primary" @click="next">Continuar →</button></div></section>
 <section v-if="step===3" class="checkout-panel"><h2>3. Dados do comprador</h2><div class="checkout-two"><label>Nome completo *<input v-model="form.buyerName" autocomplete="name"/></label><label>Telefone *<input v-model="form.buyerPhone" inputmode="tel"/></label></div><div class="checkout-two"><label>Email *<input v-model="form.email" type="email" autocomplete="email"/></label><label>CPF *<input v-model="form.cpf" inputmode="numeric"/></label></div><div class="checkout-actions"><button class="btn" @click="step=2">← Voltar</button><button class="btn primary" @click="next">Continuar →</button></div></section>
 <section v-if="step===4" class="checkout-panel"><h2>4. Revisão do pedido</h2><p><strong>Destinatário:</strong> {{form.recipientName}} · {{form.recipientPhone}}</p><p><strong>Entrega:</strong> {{form.street}}, {{form.number}} – {{form.neighborhood}}, {{form.city}}/{{form.state}} · CEP {{form.zipCode}}</p><p><strong>Data:</strong> {{form.deliveryDate}} · {{selectedPeriod?.period_name}}</p><p><strong>Comprador:</strong> {{form.buyerName}} · {{form.email}}</p><p><strong>Cartinha:</strong> {{form.cartinha||'Sem mensagem'}}</p><p class="checkout-warning">Ao confirmar, o pedido é registrado no Shopping de Flores. A cobrança só começa após selecionar uma forma de pagamento.</p><div class="checkout-actions"><button class="btn" @click="step=3">← Voltar</button><button class="btn primary" :disabled="busy||couponBusy||Boolean(orderId)" @click="createOrder">{{busy?'Criando pedido...':'Confirmar e ir para pagamento →'}}</button></div></section>
-<section v-if="step===5" class="checkout-panel"><h2>5. Escolha como pagar</h2><p>Pedido <strong>#{{orderId.slice(0,8)}}</strong> · Total {{money(paymentTotal)}}</p><div class="checkout-methods"><button :class="{selected:method==='pix'}" @click="method='pix'" type="button">Pix · QR Code</button><button :class="{selected:method==='card'}" @click="method='card'" type="button">Cartão de crédito</button></div>
-<div v-if="method==='pix'"><div v-if="!pix"><p>Gere um QR Code Pix para pagar sem sair do catálogo.</p><button :disabled="busy" class="btn primary full" @click="generatePix">{{busy?'Gerando...':'Gerar Pix'}}</button></div><div v-else class="pix-result"><img :src="pix.qr_code" alt="QR Code para pagamento Pix"/><label>Pix copia e cola<textarea :value="pix.pix_code" readonly rows="4"></textarea></label><button class="btn primary" @click="copyPix">Copiar código Pix</button></div></div>
+<section v-if="step===5" class="checkout-panel"><h2>5. Escolha como pagar</h2><p>Pedido <strong>#{{orderId.slice(0,8)}}</strong> · Total {{money(paymentTotal)}}</p><p v-if="coupon" class="catalog-coupon-discount">Cupom {{coupon.code}}: − {{money(previewDiscount)}} · desconto incluído no pagamento.</p><div class="checkout-methods"><button :class="{selected:method==='pix'}" @click="method='pix'" type="button">Pix · QR Code</button><button :class="{selected:method==='card'}" @click="method='card'" type="button">Cartão de crédito</button></div>
+<div v-if="method==='pix'"><div v-if="!pix"><p>Gere um QR Code Pix para pagar sem sair do catálogo.</p><button :disabled="busy" class="btn primary full" @click="generatePix">{{busy?'Gerando...':`Gerar Pix de ${money(paymentTotal)}`}}</button></div><div v-else class="pix-result"><img :src="pix.qr_code" alt="QR Code para pagamento Pix"/><label>Pix copia e cola<textarea :value="pix.pix_code" readonly rows="4"></textarea></label><button class="btn primary" @click="copyPix">Copiar código Pix</button></div></div>
 <form v-else class="card-form" @submit.prevent="payCard" autocomplete="off"><label>Número do cartão *<input v-model="card.number" inputmode="numeric" autocomplete="cc-number" maxlength="23" required/></label><label>Nome impresso no cartão *<input v-model="card.name" autocomplete="cc-name" required/></label><div class="checkout-two"><label>Validade MM/AA *<input v-model="card.expiry" placeholder="MM/AA" autocomplete="cc-exp" required/></label><label>CVV *<input v-model="card.cvv" type="password" inputmode="numeric" maxlength="4" autocomplete="cc-csc" required/></label></div><div class="checkout-two"><label>CPF do titular *<input v-model="card.cpf" inputmode="numeric" required/></label><label>Parcelas<select v-model.number="card.installments"><option v-for="n in 6" :key="n" :value="n">{{n}}x (sujeito à confirmação do emissor)</option></select></label></div><button class="btn primary full" :disabled="busy" type="submit">{{busy?'Processando...':`Pagar ${money(paymentTotal)}`}}</button></form>
 <p v-if="result" class="notice" role="status">{{result}}</p><button class="btn" type="button" :disabled="busy" @click="checkStatus">Consultar situação do pagamento</button><p class="checkout-warning">O pedido só é considerado pago após confirmação do Mercado Pago pelo sistema principal. Não efetue outra cobrança sem verificar o status.</p></section>
 </main><aside class="checkout-panel checkout-summary"><h2>Resumo do pedido</h2><img v-if="product.imagem_url" :src="imageUrl(product.imagem_url)" :alt="product.nome"/><strong>{{product.nome}}</strong><label>Quantidade<select v-model.number="qty" :disabled="busy||step>=4"><option v-for="n in 10" :key="n" :value="n">{{n}}</option></select></label><p>Produtos <strong>{{money(subtotal)}}</strong></p><p>Entrega <strong>{{shipping===null?'A calcular':money(shipping)}}</strong></p>
